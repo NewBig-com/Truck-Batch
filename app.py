@@ -42,7 +42,8 @@ def extract_truck_number(name):
 # Load truck database
 @st.cache_data
 def load_truck_database():
-    truck_size_path = r"c:\Users\30240ydh\.gemini\antigravity\scratch\Truck Batch\truck size.csv"
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    truck_size_path = os.path.join(BASE_DIR, "truck size.csv")
     if not os.path.exists(truck_size_path):
         st.error(f"차량 규격 데이터베이스 파일이 존재하지 않습니다: {truck_size_path}")
         return []
@@ -110,7 +111,8 @@ def load_truck_database():
 # Load parts database
 @st.cache_data
 def load_parts_database():
-    parts_path = r"c:\Users\30240ydh\.gemini\antigravity\scratch\Truck Batch\Truck batch.csv"
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    parts_path = os.path.join(BASE_DIR, "Truck batch.csv")
     if not os.path.exists(parts_path):
         st.error(f"품번 데이터베이스 파일이 존재하지 않습니다: {parts_path}")
         return {}
