@@ -368,7 +368,7 @@ def evaluate_dispatch(items_to_pack, trucks):
     for truck in trucks:
         t_w = truck['width']
         t_l = truck['length']
-        t_limit = truck['limit_weight']
+        t_limit = truck['safe_weight']
         
         weight_ok = total_weight_tons <= t_limit
         
@@ -385,7 +385,7 @@ def evaluate_dispatch(items_to_pack, trucks):
         
     return results, physical_slots
 
-# Recommend truck based on single truck evaluation (적재중량 기준 검토)
+# Recommend truck based on single truck evaluation (적정 적재 중량 기준 검토)
 def recommend_trucks(results):
     valid_trucks = []
     for r in results:
@@ -393,23 +393,23 @@ def recommend_trucks(results):
             valid_trucks.append(r)
             
     # Sort candidates by truck limit weight (smallest capacity first)
-    valid_trucks.sort(key=lambda x: x['truck']['limit_weight'])
+    valid_trucks.sort(key=lambda x: x['truck']['safe_weight'])
     return valid_trucks
 
-# Multiple truck packing (적재중량 기준 검토)
+# Multiple truck packing (적정 적재 중량 기준 검토)
 def pack_multiple_trucks(physical_slots, trucks):
     remaining_slots = list(physical_slots)
     remaining_slots.sort(key=lambda x: (x['weight'], x['width'] * x['length']), reverse=True)
     
     dispatched_trucks = []
-    sorted_trucks_desc = sorted(trucks, key=lambda x: x['limit_weight'], reverse=True)
+    sorted_trucks_desc = sorted(trucks, key=lambda x: x['safe_weight'], reverse=True)
     
     while remaining_slots:
         fit_all_truck = None
-        for truck in sorted(trucks, key=lambda x: x['limit_weight']):
+        for truck in sorted(trucks, key=lambda x: x['safe_weight']):
             t_w = truck['width']
             t_l = truck['length']
-            t_limit = truck['limit_weight']
+            t_limit = truck['safe_weight']
             
             total_rem_weight = sum(s['weight'] for s in remaining_slots) / 1000.0
             if total_rem_weight <= t_limit:
@@ -431,7 +431,7 @@ def pack_multiple_trucks(physical_slots, trucks):
         for truck in sorted_trucks_desc:
             t_w = truck['width']
             t_l = truck['length']
-            t_limit = truck['limit_weight']
+            t_limit = truck['safe_weight']
             
             truck_slots = []
             truck_weight_kg = 0.0
@@ -465,7 +465,7 @@ def pack_multiple_trucks(physical_slots, trucks):
         if not packed_any:
             unfit_slot = remaining_slots.pop(0)
             dispatched_trucks.append({
-                'truck': {'name': '배차 불가 (규격 초과)', 'width': 0, 'length': 0, 'limit_weight': 0},
+                'truck': {'name': '배차 불가 (규격 초과)', 'width': 0, 'length': 0, 'limit_weight': 0, 'safe_weight': 0},
                 'slots': [unfit_slot],
                 'weight_tons': unfit_slot['weight'] / 1000.0
             })
@@ -481,7 +481,7 @@ st.title("🚛 트럭 배차 시뮬레이터 (Excel 복사/붙여넣기 전용)"
 st.markdown("""
 엑셀(Excel)이나 표 데이터를 **드래그하여 통째로 복사한 뒤 아래 입력 칸에 붙여넣기(Ctrl+V)** 하시면 자동으로 계산이 이루어집니다.
 * **마진 적용**: 안전 간격을 위해 가로/세로 각각 양쪽 100mm(총 +200mm) 여유 치수가 적용됩니다.
-* **적재 기준 검토**: 중량 심사는 **적정적재중량이 아닌 최대 '적재중량'**을 기준으로 배차합니다.
+* **적재 기준 검토**: 중량 심사는 **최대 '적재중량'이 아닌 '적정 적재 중량'**을 기준으로 배차합니다.
 * **도착지(업체명) 기준 그룹화**: 동일한 도착지(업체명)의 품목은 한 차량으로 묶어 최적의 트럭을 산출합니다.
 * **유연한 9자리 매칭**: 품번이 DB에 없더라도 **앞자리 9글자**가 일치하는 품번 정보로 대체 연동합니다.
 """)
@@ -560,7 +560,7 @@ with col_right:
                 
             final_summary_rows = []
             
-            st.markdown("##### 🚛 상세 배차 추천 내역 (적재중량 기준)")
+            st.markdown("##### 🚛 상세 배차 추천 내역 (적정 적재 중량 기준)")
             # Loop and evaluate
             for comp, items in grouped_items.items():
                 with st.expander(f"🏢 도착지: {comp} ({len(items)}종류)", expanded=True):
@@ -593,7 +593,7 @@ with col_right:
                         best_r = valid_trucks[0]
                         t_name = best_r['truck']['name']
                         t_number = extract_truck_number(t_name)
-                        st.markdown(f"🏆 **배차 추천:** :green[{t_name}] (실제 중량: {best_r['total_weight_tons']:.3f}톤 / 최대 한도: {best_r['truck']['limit_weight']}톤)")
+                        st.markdown(f"🏆 **배차 추천:** :green[{t_name}] (실제 중량: {best_r['total_weight_tons']:.3f}톤 / 적정 한도: {best_r['truck']['safe_weight']}톤)")
                         
                         for it in items_to_pack:
                             final_summary_rows.append({
@@ -615,7 +615,7 @@ with col_right:
                         for idx, d in enumerate(dispatched):
                             t_name = d['truck']['name']
                             t_number = extract_truck_number(t_name)
-                            st.write(f"🚛 **차량 {idx+1}:** {t_name} (적재량: {d['weight_tons']:.3f} 톤 / 최대 한도: {d['truck']['limit_weight']}톤)")
+                            st.write(f"🚛 **차량 {idx+1}:** {t_name} (적재량: {d['weight_tons']:.3f} 톤 / 적정 한도: {d['truck']['safe_weight']}톤)")
                             
                             # Summarize items in this truck
                             slot_counts = {}
