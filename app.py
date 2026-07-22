@@ -187,7 +187,7 @@ def load_parts_database():
             'contact': contact,
             'width': width,
             'length': length
-        }
+        })
     return parts
 
 # Helper function to find a part in the database by exact or up to 9-character match
