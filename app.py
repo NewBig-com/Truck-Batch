@@ -117,7 +117,7 @@ def load_parts_database():
         st.error(f"품번 데이터베이스 파일이 존재하지 않습니다: {parts_path}")
         return {}
         
-    parts = {}
+    parts = []
     with open(parts_path, 'r', encoding='utf-8-sig') as f:
         reader = csv.reader(f)
         rows = list(reader)
@@ -177,7 +177,7 @@ def load_parts_database():
         width = clean_num(row[width_idx])
         length = clean_num(row[length_idx])
         
-        parts[part_no.upper()] = {
+        parts.append({
             'part_no': part_no,
             'name': part_name,
             'weight': weight,
@@ -190,21 +190,19 @@ def load_parts_database():
         }
     return parts
 
-# Helper function to find a part in the database by exact or 9-character match
-def find_part(selected_part, parts):
+# Helper function to find a part in the database by exact or up to 9-character match
+def find_part(selected_part, parts_list):
     selected_part = selected_part.strip().upper()
     if not selected_part:
-        return None
-    # 1. Exact match
-    if selected_part in parts:
-        return parts[selected_part]
-    # 2. 9-character prefix match
-    if len(selected_part) >= 9:
-        prefix = selected_part[:9]
-        for k, v in parts.items():
-            if k.startswith(prefix):
-                return v
-    return None
+        return []
+        
+    matches = []
+    prefix = selected_part[:9]
+    for v in parts_list:
+        if v['part_no'].upper()[:9] == prefix:
+            matches.append(v)
+            
+    return matches
 
 # Parse copy-pasted table data from Excel
 def parse_pasted_data(text, parts_db):
@@ -246,10 +244,10 @@ def parse_pasted_data(text, parts_db):
             continue
             
         part_no = cells[0].upper()
-        part_info = find_part(part_no, parts_db)
+        part_matches = find_part(part_no, parts_db)
         
-        if not part_info:
-            errors.append(f"행 {idx + start_idx + 1}: 입력된 품번 '{part_no}'을(를) DB에서 찾을 수 없습니다. (앞자리 9자리 불일치)")
+        if not part_matches:
+            errors.append(f"행 {idx + start_idx + 1}: 입력된 품번 '{part_no}'을(를) DB에서 찾을 수 없습니다. (앞자리 1~9자리 불일치)")
             continue
             
         qty = 1
@@ -261,33 +259,38 @@ def parse_pasted_data(text, parts_db):
             except ValueError:
                 qty = 1
                 
-        company = part_info['company']
-        if len(cells) > 2 and cells[2]:
-            company = cells[2].strip()
-        if not company:
-            company = "도착지 정보가 없습니다"
-            
         stack = 1
-        if len(cells) > 3 and cells[3]:
+        if len(cells) > 2 and cells[2]:
             try:
-                stack = int(clean_num(cells[3]))
+                stack = int(clean_num(cells[2]))
                 if stack <= 0:
                     stack = 1
             except ValueError:
                 stack = 1
                 
+        # 다중 매칭된 경우 도착지 병합
+        companies = []
+        for p in part_matches:
+            c = p['company']
+            if c not in companies:
+                companies.append(c)
+        
+        merged_company = " / ".join(companies)
+        if not merged_company:
+            merged_company = "도착지 정보가 없습니다"
+            
+        base_info = part_matches[0]
+        
         parsed_items.append({
             'part_no': part_no,
             'qty': qty,
-            'company': company,
+            'company': merged_company,
             'stack': stack,
-            'name': part_info['name'],
-            'weight': part_info['weight'],
-            'width': part_info['width'],
-            'length': part_info['length'],
-            'address': part_info['address'],
-            'manager': part_info['manager'],
-            'contact': part_info['contact']
+            'name': base_info['name'],
+            'weight': base_info['weight'],
+            'width': base_info['width'],
+            'length': base_info['length'],
+            'destinations': part_matches # 원본 매칭 정보 보존 (표 출력용)
         })
         
     return parsed_items, errors
@@ -483,7 +486,7 @@ st.markdown("""
 * **마진 적용**: 안전 간격을 위해 가로/세로 각각 양쪽 100mm(총 +200mm) 여유 치수가 적용됩니다.
 * **적재 기준 검토**: 중량 심사는 **최대 '적재중량'이 아닌 '적정 적재 중량'**을 기준으로 배차합니다.
 * **도착지(업체명) 기준 그룹화**: 동일한 도착지(업체명)의 품목은 한 차량으로 묶어 최적의 트럭을 산출합니다.
-* **유연한 9자리 매칭**: 품번이 DB에 없더라도 **앞자리 9글자**가 일치하는 품번 정보로 대체 연동합니다.
+* **유연한 1~9자리 매칭**: 품번의 뒷자리가 변경되더라도 **앞자리(최대 9글자)**가 일치하는 품번 정보로 대체 연동합니다.
 """)
 
 # Setup Sidebar database info
@@ -577,9 +580,7 @@ with col_right:
                             'weight': it['weight'],
                             'qty': it['qty'],
                             'stack': it['stack'],
-                            'address': it['address'],
-                            'manager': it['manager'],
-                            'contact': it['contact']
+                            'destinations': it.get('destinations', [])
                         })
                         
                     total_weight_kg = sum(it['weight'] * it['qty'] for it in items_to_pack)
@@ -627,24 +628,30 @@ with col_right:
                                 p_info = next(it for it in items_to_pack if it['part_no'] == part)
                                 st.write(f"  - `{part}` ({count}개 적재) | 중량: {(p_info['weight'] * count)/1000.0:.3f} 톤")
                                 
-                                final_summary_rows.append({
-                                    "품번": part,
-                                    "품명": p_info['name'],
-                                    "수량": int(count),
-                                    "중량": round((p_info['weight'] * count) / 1000.0, 3),
-                                    "차량 명칭": t_number,
-                                    "도착지": comp,
-                                    "주소": p_info['address'] if p_info['address'] else "도착지 정보가 없습니다",
-                                    "담당자": p_info['manager'],
-                                    "연락처": p_info['contact']
-                                })
+                                destinations = p_info.get('destinations', [])
+                                if not destinations:
+                                    # 폴백
+                                    destinations = [{'company': comp, 'address': '', 'manager': '', 'contact': ''}]
+                                    
+                                for dest in destinations:
+                                    final_summary_rows.append({
+                                        "품번": dest.get('part_no', part),
+                                        "품명": p_info['name'],
+                                        "수량": int(count),
+                                        "총중량": round((p_info['weight'] * count) / 1000.0, 3),
+                                        "배차톤수": t_number,
+                                        "도착지": dest.get('company', comp),
+                                        "도착지주소": dest.get('address', '') if dest.get('address') else "정보 없음",
+                                        "도착지 담당자": dest.get('manager', ''),
+                                        "담당자 연락처": dest.get('contact', '')
+                                    })
                                 
             # Output final table
             st.markdown("---")
             st.subheader("📋 최종 배차 요약 표")
             
             df_summary = pd.DataFrame(final_summary_rows)
-            cols = ["품번", "품명", "수량", "중량", "차량 명칭", "도착지", "주소", "담당자", "연락처"]
+            cols = ["품번", "품명", "수량", "총중량", "배차톤수", "도착지", "도착지주소", "도착지 담당자", "담당자 연락처"]
             df_summary = df_summary[cols]
             
             st.dataframe(df_summary, use_container_width=True)

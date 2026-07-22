@@ -86,7 +86,7 @@ def load_parts_database():
         print(f"Error: {parts_path} not found.")
         sys.exit(1)
         
-    parts = {}
+    parts = []
     with open(parts_path, 'r', encoding='utf-8-sig') as f:
         reader = csv.reader(f)
         rows = list(reader)
@@ -130,13 +130,13 @@ def load_parts_database():
         width = clean_num(row[width_idx])
         length = clean_num(row[length_idx])
         
-        parts[part_no.upper()] = {
+        parts.append({
             'part_no': part_no,
             'name': part_name,
             'weight': weight,
             'width': width,
             'length': length
-        }
+        })
     return parts
 
 def can_fit_shelf(items, W, L):
@@ -378,16 +378,25 @@ def main():
                 if '3' in stack_str:
                     stack = 3
                     
-            if part_no not in parts:
-                print(f"경고: 데이터베이스에 '{part_no}' 품번이 없습니다. 다시 입력해 주세요.")
+            part_matches = []
+            prefix = part_no[:9]
+            for v in parts:
+                if v['part_no'].upper()[:9] == prefix:
+                    part_matches.append(v)
+                    
+            if not part_matches:
+                print(f"경고: 데이터베이스에 '{part_no}' 품번(및 1~9자리 일치 품번)이 없습니다. 다시 입력해 주세요.")
                 continue
                 
+            base_info = part_matches[0]
+                
             inputs.append({
-                'part_no': part_no,
+                'part_no': base_info['part_no'],
                 'qty': qty,
-                'stack': stack
+                'stack': stack,
+                'info': base_info
             })
-            print(f"추가됨: {part_no} | 수량: {qty}개 | 적재 방식: {'3단 적재' if stack == 3 else '1단 적재'}")
+            print(f"추가됨: {base_info['part_no']} | 수량: {qty}개 | 적재 방식: {'3단 적재' if stack == 3 else '1단 적재'}")
             
         if not inputs:
             print("입력된 항목이 없습니다.")
@@ -395,7 +404,7 @@ def main():
             
         items_to_pack = []
         for inp in inputs:
-            part_info = parts[inp['part_no']]
+            part_info = inp['info']
             items_to_pack.append({
                 'part_no': part_info['part_no'],
                 'name': part_info['name'],
