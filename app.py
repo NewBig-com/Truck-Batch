@@ -260,37 +260,44 @@ def parse_pasted_data(text, parts_db):
                 qty = 1
                 
         stack = 1
-        if len(cells) > 2 and cells[2]:
+        # If there are 4 columns (품번, 수량, 도착지, 단수), stack is usually the 4th column (index 3).
+        # Let's try to parse the last column or index 3 if available.
+        if len(cells) >= 4 and cells[3]:
             try:
-                stack = int(clean_num(cells[2]))
-                if stack <= 0:
-                    stack = 1
+                stack = int(clean_num(cells[3]))
             except ValueError:
-                stack = 1
+                pass
+        elif len(cells) >= 3 and cells[2]:
+            # It might be 3 columns: 품번, 수량, 단수
+            try:
+                val = int(clean_num(cells[2]))
+                if val > 0:
+                    stack = val
+            except ValueError:
+                pass
                 
-        # 다중 매칭된 경우 도착지 병합
+        if stack <= 0:
+            stack = 1
+                
+        # 다중 매칭된 경우 도착지 옵션 제공을 위해 리스트로 저장
         companies = []
         for p in part_matches:
             c = p['company']
             if c not in companies:
                 companies.append(c)
         
-        merged_company = " / ".join(companies)
-        if not merged_company:
-            merged_company = "도착지 정보가 없습니다"
-            
         base_info = part_matches[0]
         
         parsed_items.append({
             'part_no': part_no,
             'qty': qty,
-            'company': merged_company,
+            'company_options': companies,
             'stack': stack,
             'name': base_info['name'],
             'weight': base_info['weight'],
             'width': base_info['width'],
             'length': base_info['length'],
-            'destinations': part_matches # 원본 매칭 정보 보존 (표 출력용)
+            'destinations': part_matches # 원본 매칭 정보 보존
         })
         
     return parsed_items, errors
@@ -479,13 +486,21 @@ def pack_multiple_trucks(physical_slots, trucks):
 trucks = load_truck_database()
 parts = load_parts_database()
 
+# Initialize session state for multi-step flow
+if 'step' not in st.session_state:
+    st.session_state.step = 'input'
+if 'parsed_items' not in st.session_state:
+    st.session_state.parsed_items = []
+if 'parse_errors' not in st.session_state:
+    st.session_state.parse_errors = []
+
 # Title UI
 st.title("🚛 트럭 배차 시뮬레이터 (Excel 복사/붙여넣기 전용)")
 st.markdown("""
 엑셀(Excel)이나 표 데이터를 **드래그하여 통째로 복사한 뒤 아래 입력 칸에 붙여넣기(Ctrl+V)** 하시면 자동으로 계산이 이루어집니다.
 * **마진 적용**: 안전 간격을 위해 가로/세로 각각 양쪽 100mm(총 +200mm) 여유 치수가 적용됩니다.
 * **적재 기준 검토**: 중량 심사는 **최대 '적재중량'이 아닌 '적정 적재 중량'**을 기준으로 배차합니다.
-* **도착지(업체명) 기준 그룹화**: 동일한 도착지(업체명)의 품목은 한 차량으로 묶어 최적의 트럭을 산출합니다.
+* **도착지(업체명) 자동 연동**: 품번을 기준으로 등록된 데이터에서 도착지를 자동으로 가져옵니다. 여러 도착지가 있는 경우 직접 선택할 수 있습니다.
 * **유연한 1~9자리 매칭**: 품번의 뒷자리가 변경되더라도 **앞자리(최대 9글자)**가 일치하는 품번 정보로 대체 연동합니다.
 """)
 
@@ -514,37 +529,85 @@ with col_left:
     
     col_btn1, col_btn2 = st.columns([1, 1])
     with col_btn1:
-        calculate = st.button("🚚 배차 최적화 시작", type="primary", use_container_width=True)
+        calculate = st.button("🚚 배차 데이터 파싱", type="primary", use_container_width=True)
     with col_btn2:
         clear = st.button("초기화", type="secondary", use_container_width=True)
         if clear:
+            st.session_state.step = 'input'
+            st.session_state.parsed_items = []
+            st.session_state.parse_errors = []
             st.rerun()
 
-with col_right:
-    st.subheader("📊 시뮬레이션 결과")
+if calculate and pasted_text.strip():
+    # Parse inputs
+    parsed_items, parse_errors = parse_pasted_data(pasted_text, parts)
+    st.session_state.parsed_items = parsed_items
+    st.session_state.parse_errors = parse_errors
     
-    if calculate and pasted_text.strip():
-        # Parse inputs
-        parsed_items, parse_errors = parse_pasted_data(pasted_text, parts)
+    # Check if we need to resolve multiple destinations
+    needs_resolution = False
+    for item in parsed_items:
+        if len(item['company_options']) > 1:
+            needs_resolution = True
+            break
+            
+    if needs_resolution:
+        st.session_state.step = 'resolve'
+    else:
+        st.session_state.step = 'simulation'
+
+with col_right:
+    st.subheader("📊 처리 진행 및 시뮬레이션 결과")
+    
+    if st.session_state.step == 'input' and not calculate:
+        st.info("왼쪽 박스에 데이터를 붙여넣고 [배차 데이터 파싱] 버튼을 누르시면 단계가 진행됩니다.")
         
-        # Display parsing warnings/errors if any
-        if parse_errors:
-            with st.error_tracker if hasattr(st, "error_tracker") else st.expander("⚠️ 일부 품번 매칭 오류 목록", expanded=True):
-                for err in parse_errors:
-                    st.write(err)
+    # Show errors if any
+    if st.session_state.parse_errors:
+        with st.error_tracker if hasattr(st, "error_tracker") else st.expander("⚠️ 일부 품번 매칭 오류 목록", expanded=True):
+            for err in st.session_state.parse_errors:
+                st.write(err)
+
+    if st.session_state.step == 'resolve':
+        st.warning("일부 품번에 도착지가 여러 곳 등록되어 있습니다. 알맞은 도착지를 선택해주세요.")
+        
+        with st.form("resolve_destinations_form"):
+            for idx, item in enumerate(st.session_state.parsed_items):
+                if len(item['company_options']) > 1:
+                    selected_company = st.selectbox(
+                        f"품번: {item['part_no']} ({item['qty']}개)의 도착지 선택",
+                        options=item['company_options'],
+                        key=f"dest_{idx}"
+                    )
+                else:
+                    st.write(f"품번: {item['part_no']} -> 도착지: {item['company_options'][0] if item['company_options'] else '정보 없음'} (자동 선택)")
                     
+            submit_resolution = st.form_submit_button("선택 완료 및 시뮬레이션 진행", type="primary")
+            
+            if submit_resolution:
+                for idx, item in enumerate(st.session_state.parsed_items):
+                    if len(item['company_options']) > 1:
+                        item['company'] = st.session_state[f"dest_{idx}"]
+                    else:
+                        item['company'] = item['company_options'][0] if item['company_options'] else "도착지 정보가 없습니다"
+                st.session_state.step = 'simulation'
+                st.rerun()
+
+    elif st.session_state.step == 'simulation':
+        parsed_items = st.session_state.parsed_items
+        
         if not parsed_items:
             st.error("해석된 배차 항목이 없습니다. 올바른 포맷으로 붙여넣었는지 확인해주세요.")
         else:
-            st.success(f"총 {len(parsed_items)}개의 배차 물품이 정상 매칭되었습니다.")
+            st.success(f"총 {len(parsed_items)}개의 배차 물품이 시뮬레이션 준비되었습니다.")
             
             # Show input preview
-            st.markdown("##### 📥 파싱된 데이터 확인")
+            st.markdown("##### 📥 배차 데이터 확인")
             df_preview = pd.DataFrame([{
                 "품번": it['part_no'],
                 "품명": it['name'],
                 "수량": f"{it['qty']}개",
-                "도착지": it['company'],
+                "도착지": it['company'] if 'company' in it and it['company'] else (it['company_options'][0] if it['company_options'] else "도착지 정보가 없습니다"),
                 "단수": f"{it['stack']}단",
                 "제품 치수": f"{int(it['width'])}x{int(it['length'])} mm",
                 "중량": f"{(it['weight'] * it['qty'])/1000.0:.3f} 톤"
@@ -554,9 +617,13 @@ with col_right:
             # Group items by company/destination
             grouped_items = {}
             for item in parsed_items:
-                comp = item['company']
+                comp = item.get('company')
                 if not comp:
-                    comp = "도착지 정보가 없습니다"
+                    comp = item['company_options'][0] if item['company_options'] else "도착지 정보가 없습니다"
+                
+                # Update item with resolved company
+                item['company'] = comp
+                
                 if comp not in grouped_items:
                     grouped_items[comp] = []
                 grouped_items[comp].append(item)
@@ -597,6 +664,12 @@ with col_right:
                         st.markdown(f"🏆 **배차 추천:** :green[{t_name}] (실제 중량: {best_r['total_weight_tons']:.3f}톤 / 적정 한도: {best_r['truck']['safe_weight']}톤)")
                         
                         for it in items_to_pack:
+                            # Match company address based on selection
+                            matched_dest = next((d for d in it['destinations'] if d['company'] == comp), None)
+                            address = matched_dest['address'] if matched_dest else "도착지 정보가 없습니다"
+                            manager = matched_dest['manager'] if matched_dest else ""
+                            contact = matched_dest['contact'] if matched_dest else ""
+
                             final_summary_rows.append({
                                 "품번": it['part_no'],
                                 "품명": it['name'],
@@ -604,9 +677,9 @@ with col_right:
                                 "중량": round((it['weight'] * it['qty']) / 1000.0, 3),
                                 "차량 명칭": t_number,
                                 "도착지": comp,
-                                "주소": it['address'] if it['address'] else "도착지 정보가 없습니다",
-                                "담당자": it['manager'],
-                                "연락처": it['contact']
+                                "주소": address,
+                                "담당자": manager,
+                                "연락처": contact
                             })
                             
                     else:
@@ -628,44 +701,40 @@ with col_right:
                                 p_info = next(it for it in items_to_pack if it['part_no'] == part)
                                 st.write(f"  - `{part}` ({count}개 적재) | 중량: {(p_info['weight'] * count)/1000.0:.3f} 톤")
                                 
-                                destinations = p_info.get('destinations', [])
-                                if not destinations:
-                                    # 폴백
-                                    destinations = [{'company': comp, 'address': '', 'manager': '', 'contact': ''}]
-                                    
-                                for dest in destinations:
-                                    final_summary_rows.append({
-                                        "품번": dest.get('part_no', part),
-                                        "품명": p_info['name'],
-                                        "수량": int(count),
-                                        "총중량": round((p_info['weight'] * count) / 1000.0, 3),
-                                        "배차톤수": t_number,
-                                        "도착지": dest.get('company', comp),
-                                        "도착지주소": dest.get('address', '') if dest.get('address') else "정보 없음",
-                                        "도착지 담당자": dest.get('manager', ''),
-                                        "담당자 연락처": dest.get('contact', '')
-                                    })
+                                matched_dest = next((d for d in p_info['destinations'] if d['company'] == comp), None)
+                                address = matched_dest['address'] if matched_dest else "정보 없음"
+                                manager = matched_dest['manager'] if matched_dest else ""
+                                contact = matched_dest['contact'] if matched_dest else ""
+
+                                final_summary_rows.append({
+                                    "품번": part,
+                                    "품명": p_info['name'],
+                                    "수량": int(count),
+                                    "총중량": round((p_info['weight'] * count) / 1000.0, 3),
+                                    "배차톤수": t_number,
+                                    "도착지": comp,
+                                    "도착지주소": address,
+                                    "도착지 담당자": manager,
+                                    "담당자 연락처": contact
+                                })
                                 
             # Output final table
             st.markdown("---")
             st.subheader("📋 최종 배차 요약 표")
             
             df_summary = pd.DataFrame(final_summary_rows)
-            cols = ["품번", "품명", "수량", "총중량", "배차톤수", "도착지", "도착지주소", "도착지 담당자", "담당자 연락처"]
-            df_summary = df_summary[cols]
-            
-            st.dataframe(df_summary, use_container_width=True)
-            
-            csv_data = df_summary.to_csv(index=False, encoding='utf-8-sig')
-            st.download_button(
-                label="💾 배차 요약 파일 다운로드 (CSV)",
-                data=csv_data,
-                file_name="배차_요약_리스트.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
-    else:
-        if calculate:
-            st.warning("데이터를 입력해 주세요.")
-        else:
-            st.info("왼쪽 박스에 데이터를 붙여넣고 [배차 최적화 시작] 버튼을 누르시면 여기에 결과가 표시됩니다.")
+            if not df_summary.empty:
+                cols = ["품번", "품명", "수량", "총중량", "배차톤수", "도착지", "도착지주소", "도착지 담당자", "담당자 연락처"]
+                df_summary = df_summary[cols]
+                
+                st.dataframe(df_summary, use_container_width=True)
+                
+                csv_data = df_summary.to_csv(index=False, encoding='utf-8-sig')
+                st.download_button(
+                    label="💾 배차 요약 파일 다운로드 (CSV)",
+                    data=csv_data,
+                    file_name="배차_요약_리스트.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+
