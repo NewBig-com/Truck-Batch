@@ -522,9 +522,9 @@ with col_left:
     
     # Text area for user to copy-paste
     pasted_text = st.text_area(
-        "엑셀 표의 행들을 복사해서 아래에 붙여넣으세요:",
+        "엑셀 표의 행들을 복사해서 아래에 붙여넣으세요 (도착지 복사 불필요):",
         height=250,
-        placeholder="[예시 포맷 - 헤더 포함 여부 무관]\n품번\t수량\t도착지\t단수\n281401101CCN00\t8\t혜성기계(아메코)\t2\n281410101CCN00\t7\t혜성기계(아메코)\t1\n281415101CCN00\t7\t신화엔텍(아메코)\t1"
+        placeholder="[예시 포맷 - 헤더 포함 여부 무관]\n품번\t수량\t단수\n281401101CCN00\t8\t2\n281410101CCN00\t7\t1\n281415101CCN00\t7\t1"
     )
     
     col_btn1, col_btn2 = st.columns([1, 1])
