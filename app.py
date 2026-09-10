@@ -674,12 +674,12 @@ with col_right:
                                 "품번": it['part_no'],
                                 "품명": it['name'],
                                 "수량": it['qty'],
-                                "중량": round((it['weight'] * it['qty']) / 1000.0, 3),
-                                "차량 명칭": t_number,
+                                "총중량": round((it['weight'] * it['qty']) / 1000.0, 3),
+                                "배차톤수": t_number,
                                 "도착지": comp,
-                                "주소": address,
-                                "담당자": manager,
-                                "연락처": contact
+                                "도착지주소": address,
+                                "도착지 담당자": manager,
+                                "담당자 연락처": contact
                             })
                             
                     else:
